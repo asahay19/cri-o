@@ -85,8 +85,35 @@ EOF
 	log "Wrote $conf (root=$GRAPHROOT)"
 }
 
-du_graphroot() {
+graphroot_mount() {
+	findmnt -n -o TARGET --target "$GRAPHROOT" 2>/dev/null || df -P "$GRAPHROOT" | awk 'NR==2 {print $NF}'
+}
+
+# Logical sum of file sizes (st_size). Reflink dedup shares disk blocks but does NOT
+# shrink this number — each path still reports its full size.
+du_apparent_bytes() {
 	du -sb "$GRAPHROOT" 2>/dev/null | awk '{print $1}'
+}
+
+# Best-effort block usage under graphroot (st_blocks). May still over-count shared
+# XFS reflink extents depending on kernel/tools; prefer df_used_bytes for savings.
+du_disk_bytes() {
+	du -s --block-size=1 "$GRAPHROOT" 2>/dev/null | awk '{print $1}'
+}
+
+# Actual bytes used on the filesystem hosting GRAPHROOT — this drops after reflink dedup.
+df_used_bytes() {
+	local mountpoint=${1:-}
+	local used
+	if [[ -z "$mountpoint" ]]; then
+		mountpoint=$(graphroot_mount)
+	fi
+	used=$(df -B1 --output=used "$mountpoint" 2>/dev/null | tail -1 | tr -d ' ')
+	if [[ -z "$used" || ! "$used" =~ ^[0-9]+$ ]]; then
+		echo 0
+	else
+		echo "$used"
+	fi
 }
 
 human_bytes() {
@@ -235,19 +262,28 @@ main() {
 		log "SKIP_BUILD=1: using existing storage"
 	fi
 
-	local image_count before_bytes after_bytes dedup_log dedup_secs delta saved_line
+	local image_count mountpoint
+	local before_apparent after_apparent before_fs after_fs before_du after_du
+	local dedup_log dedup_secs delta_fs delta_apparent saved_line
+	mountpoint=$(graphroot_mount)
 	image_count=$("${PODMAN[@]}" images -q 2>/dev/null | wc -l | tr -d ' ')
-	before_bytes=$(du_graphroot)
+	before_apparent=$(du_apparent_bytes)
+	before_du=$(du_disk_bytes)
+	before_fs=$(df_used_bytes "$mountpoint")
 
-	log "Storage before dedup: $(human_bytes "$before_bytes") ($before_bytes bytes)"
+	log "Storage before dedup (filesystem $mountpoint): $(human_bytes "$before_fs") used on disk"
+	log "Storage before dedup (graphroot apparent): $(human_bytes "$before_apparent") ($before_apparent bytes)"
 	log "Images in store: $image_count"
 	diagnose_on_disk_duplicates '*/diff/shared/blob0.dat'
 
 	dedup_log="$WORKDIR/dedup.log"
 	dedup_secs=$(run_dedup "$dedup_log")
 
-	after_bytes=$(du_graphroot)
-	delta=$((before_bytes - after_bytes))
+	after_apparent=$(du_apparent_bytes)
+	after_du=$(du_disk_bytes)
+	after_fs=$(df_used_bytes "$mountpoint")
+	delta_fs=$((before_fs - after_fs))
+	delta_apparent=$((before_apparent - after_apparent))
 	saved_line=$(parse_saved_line "$dedup_log")
 
 	{
@@ -258,15 +294,23 @@ main() {
 		echo "NUM_IMAGES (requested): $NUM_IMAGES"
 		echo "Images in store: $image_count"
 		echo "GRAPHROOT: $GRAPHROOT"
+		echo "Mount: $mountpoint"
 		echo "----------------------------------------------"
 		echo "Build time: ${build_secs}s"
 		echo "Dedup wall time: ${dedup_secs}s"
-		echo "Disk before dedup: $(human_bytes "$before_bytes") ($before_bytes bytes)"
-		echo "Disk after dedup:  $(human_bytes "$after_bytes") ($after_bytes bytes)"
-		echo "du delta (before-after): $(human_bytes "$delta") ($delta bytes)"
+		echo "Filesystem used before dedup: $(human_bytes "$before_fs") ($before_fs bytes)"
+		echo "Filesystem used after dedup:  $(human_bytes "$after_fs") ($after_fs bytes)"
+		echo "Filesystem delta (before-after): $(human_bytes "$delta_fs") ($delta_fs bytes)"
+		echo "Graphroot apparent size before: $(human_bytes "$before_apparent") ($before_apparent bytes)"
+		echo "Graphroot apparent size after:  $(human_bytes "$after_apparent") ($after_apparent bytes)"
+		echo "Graphroot apparent delta: $(human_bytes "$delta_apparent") ($delta_apparent bytes)"
+		echo "Graphroot block usage (du -s) before: $(human_bytes "$before_du") ($before_du bytes)"
+		echo "Graphroot block usage (du -s) after:  $(human_bytes "$after_du") ($after_du bytes)"
 		echo "crio dedup reported: $saved_line"
 		echo "----------------------------------------------"
 		echo "Notes:"
+		echo "- Reflink dedup shares physical disk blocks; file logical sizes are unchanged."
+		echo "  du -sb (apparent size) often stays flat — use filesystem used (df) for real savings."
 		echo "- Each image COPY layer includes identical shared blobs plus a unique marker"
 		echo "  so podman does not reuse layers and duplicates remain on disk for dedup."
 		echo "- Unique per-image layer sizes vary 1-15 MB."
