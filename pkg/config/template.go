@@ -830,7 +830,9 @@ const templateStringCrioImageEnableStorageDedup = `# EnableStorageDedup enables 
 # reducing disk usage without the drawbacks of hard links.
 # Deduplication can also be triggered manually via crio dedup.
 # Requires filesystem support (e.g., XFS with reflink=1 or Btrfs).
-# Default: false.
+# Disabled by default because dedup adds startup latency and only works on
+# filesystems with reflink support. Enable on storage-constrained nodes after
+# confirming the graph root uses XFS with reflink=1 or Btrfs.
 {{ $.Comment }}enable_storage_dedup = {{ .EnableStorageDedup }}
 `
 

@@ -597,6 +597,8 @@ type ImageConfig struct {
 	// reducing disk usage without the drawbacks of hard links.
 	// Deduplication can also be triggered manually via `crio dedup`.
 	// Requires filesystem support (e.g., XFS with reflink=1 or Btrfs).
+	// Disabled by default: adds startup latency and needs reflink support.
+	// Enable on storage-constrained nodes; use `crio dedup` for manual runs.
 	EnableStorageDedup bool `toml:"enable_storage_dedup"`
 }
 

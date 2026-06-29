@@ -253,7 +253,7 @@ crio [GLOBAL OPTIONS] command [COMMAND OPTIONS] [ARGUMENTS...]
 
 **--enable-profile-unix-socket**: Enable pprof profiler on crio unix domain socket.
 
-**--enable-storage-dedup**: Enable background storage deduplication using reflinks on startup.
+**--enable-storage-dedup**: Enable background storage deduplication using reflinks on startup. Disabled by default because dedup adds startup latency and requires XFS with reflink=1 or Btrfs. Enable on storage-constrained nodes; use `crio dedup` for manual runs while CRI-O is stopped.
 
 **--enable-tracing**: Enable OpenTelemetry trace data exporting.
 
