@@ -3,20 +3,20 @@
 #
 # Builds NUM_IMAGES container images with:
 #   - varied per-image sizes (unique random layer)
-#   - duplicated content across images (shared blob files copied into separate layers)
+#   - duplicated file content across images in DISTINCT layers (same bytes, different
+#     layer digest — podman layer reuse would otherwise hide duplicates from dedup)
 #
 # Then runs `crio dedup`, records wall time, disk usage, and bytes saved.
 #
-# Prerequisites: podman, XFS graphroot with reflink=1, built ./bin/crio, /etc/crio/crio.conf
-#
-# Usage:
+# Usage (pass env vars before sudo; -E is optional and often ignored):
 #   export GRAPHROOT=/var/tmp/crio-storage/graphroot
 #   export RUNROOT=/var/tmp/crio-storage/runroot
-#   sudo -E ./test/dedup-scale-test.sh
+#   sudo NUM_IMAGES=10 ./test/dedup-scale-test.sh
 #
 # Options (env):
 #   NUM_IMAGES=100          number of images to build (default: 100)
-#   SKIP_BUILD=1            skip image build, only run dedup (storage already populated)
+#   SKIP_BUILD=1            skip image build, only run dedup
+#   FRESH=1                 wipe graphroot/runroot before building
 #   CRIO_BIN=./bin/crio
 #   CRIO_CONF=/etc/crio/crio.conf
 #   RESULTS_FILE=/tmp/dedup-scale-results.txt
@@ -30,8 +30,18 @@ CRIO_BIN="${CRIO_BIN:-./bin/crio}"
 CRIO_CONF="${CRIO_CONF:-/etc/crio/crio.conf}"
 RESULTS_FILE="${RESULTS_FILE:-/tmp/dedup-scale-results.txt}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
+FRESH="${FRESH:-0}"
+
+WORKDIR=""
 
 PODMAN=(podman --root "$GRAPHROOT" --runroot "$RUNROOT" --storage-driver overlay)
+
+cleanup() {
+	if [[ -n "$WORKDIR" && -d "$WORKDIR" ]]; then
+		rm -rf "$WORKDIR"
+	fi
+}
+trap cleanup EXIT
 
 log() {
 	echo "[$(date -Iseconds)] $*" >&2
@@ -39,7 +49,7 @@ log() {
 
 require_root() {
 	if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
-		echo "Run as root (sudo -E $0)" >&2
+		echo "Run as root: sudo NUM_IMAGES=10 $0" >&2
 		exit 1
 	fi
 }
@@ -73,8 +83,6 @@ prepare_shared_blobs() {
 	local shared_dir="$workdir/shared-blobs"
 	mkdir -p "$shared_dir"
 
-	# Shared files reused across many images (simulates common base layers / JARs / model weights).
-	# Total ~118 MB of shared content; each image copies 3–4 of these into its own layer.
 	local sizes_mb=(1 2 5 10 10 20 20 50)
 	local i=0
 	for size in "${sizes_mb[@]}"; do
@@ -92,12 +100,11 @@ prepare_shared_blobs() {
 build_images() {
 	local workdir=$1
 	local shared_dir=$2
-	local build_start build_end build_secs
+	local build_start build_end build_secs n
 
 	log "Building $NUM_IMAGES images into $GRAPHROOT (this may take a while)..."
 
-	# Pull base once
-	"${PODMAN[@]}" pull docker.io/library/alpine:3.19
+	"${PODMAN[@]}" pull docker.io/library/alpine:3.19 >/dev/null 2>&1
 
 	build_start=$(date +%s)
 
@@ -106,29 +113,33 @@ build_images() {
 		local ctx="$workdir/build-$n"
 		mkdir -p "$ctx"
 
-		# Pick 3 shared blobs with overlap across images (every image shares at least 2 with neighbors).
 		local b0=$(( (n - 1) % 8 ))
 		local b1=$(( (n + 2) % 8 ))
 		local b2=$(( (n + 5) % 8 ))
-		local blobs=("$shared_dir"/shared-$(printf '%02d' "$b0")-* \
-			"$shared_dir"/shared-$(printf '%02d' "$b1")-* \
-			"$shared_dir"/shared-$(printf '%02d' "$b2")-*)
+		local blob0 blob1 blob2
+		blob0=$(ls "$shared_dir"/shared-$(printf '%02d' "$b0")-*)
+		blob1=$(ls "$shared_dir"/shared-$(printf '%02d' "$b1")-*)
+		blob2=$(ls "$shared_dir"/shared-$(printf '%02d' "$b2")-*)
 
-		# Unique layer size: 1–15 MB depending on image index (variety of sizes).
 		local unique_mb=$(( (n % 15) + 1 ))
 		dd if=/dev/urandom of="$ctx/unique.dat" bs=1M count="$unique_mb" status=none
+		echo "layer-marker-$n" >"$ctx/layer-marker.txt"
 
-		{
-			echo 'FROM alpine:3.19'
-			for blob in "${blobs[@]}"; do
-				echo "COPY $(basename "$blob") /shared/$(basename "$blob")"
-				cp "$blob" "$ctx/"
-			done
-			echo 'COPY unique.dat /app/unique.dat'
-			echo "RUN echo dedup-scale-$n > /app/id.txt"
-		} >"$ctx/Dockerfile"
+		cp "$blob0" "$ctx/blob0.dat"
+		cp "$blob1" "$ctx/blob1.dat"
+		cp "$blob2" "$ctx/blob2.dat"
 
-		if ! "${PODMAN[@]}" build -q -t "$tag" "$ctx" >/dev/null; then
+		# Shared blob bytes are identical across images, but each COPY layer also
+		# includes a per-image marker so podman cannot reuse the layer (different
+		# digest, duplicate bytes on disk — what crio dedup should collapse).
+		cat >"$ctx/Dockerfile" <<EOF
+FROM alpine:3.19
+COPY blob0.dat blob1.dat blob2.dat layer-marker.txt /shared/
+COPY unique.dat /app/unique.dat
+RUN echo dedup-scale-$n > /app/id.txt
+EOF
+
+		if ! "${PODMAN[@]}" build -q -t "$tag" "$ctx" >/dev/null 2>&1; then
 			log "ERROR: build failed for $tag"
 			exit 1
 		fi
@@ -141,7 +152,7 @@ build_images() {
 	build_end=$(date +%s)
 	build_secs=$((build_end - build_start))
 	log "Image build complete in ${build_secs}s ($(( build_secs / 60 ))m $(( build_secs % 60 ))s)"
-	echo "$build_secs"
+	printf '%s' "$build_secs"
 }
 
 run_dedup() {
@@ -150,22 +161,20 @@ run_dedup() {
 
 	log "Running crio dedup..."
 	start=$(date +%s)
-	"$CRIO_BIN" -c "$CRIO_CONF" dedup 2>&1 | tee "$dedup_log"
+	# Log to file and stderr only; stdout stays clean for timing capture.
+	"$CRIO_BIN" -c "$CRIO_CONF" dedup 2>&1 | tee "$dedup_log" >&2
 	end=$(date +%s)
 	elapsed=$((end - start))
 	log "Dedup finished in ${elapsed}s"
-	echo "$elapsed"
+	printf '%s' "$elapsed"
 }
 
-parse_saved_bytes() {
+parse_saved_line() {
 	local dedup_log=$1
-	# "Storage deduplication complete: 20MiB saved" or "no savings"
 	if grep -q 'no savings' "$dedup_log"; then
-		echo 0
-	elif grep -oE '[0-9]+(\.[0-9]+)?[[:space:]]*[KMGT]?iB saved' "$dedup_log" >/dev/null; then
-		grep -oE 'Storage deduplication complete: [^$]+' "$dedup_log" | tail -1
+		echo "no savings"
 	else
-		echo "unknown"
+		grep 'Storage deduplication complete:' "$dedup_log" | tail -1 | sed 's/.*msg="//;s/"$//' || echo "unknown"
 	fi
 }
 
@@ -178,35 +187,36 @@ main() {
 		exit 1
 	fi
 
-	local workdir
-	workdir=$(mktemp -d)
-	trap 'rm -rf "$workdir"' EXIT
+	if [[ "$FRESH" == "1" ]]; then
+		log "FRESH=1: wiping $GRAPHROOT and $RUNROOT"
+		rm -rf "$GRAPHROOT" "$RUNROOT"
+		mkdir -p "$GRAPHROOT" "$RUNROOT"
+	fi
+
+	WORKDIR=$(mktemp -d)
 
 	local build_secs=0
 	if [[ "$SKIP_BUILD" != "1" ]]; then
 		local shared_dir
-		shared_dir=$(prepare_shared_blobs "$workdir")
-		build_secs=$(build_images "$workdir" "$shared_dir")
+		shared_dir=$(prepare_shared_blobs "$WORKDIR")
+		build_secs=$(build_images "$WORKDIR" "$shared_dir")
 	else
 		log "SKIP_BUILD=1: using existing storage"
 	fi
 
-	local image_count
+	local image_count before_bytes after_bytes dedup_log dedup_secs delta saved_line
 	image_count=$("${PODMAN[@]}" images -q 2>/dev/null | wc -l | tr -d ' ')
-	local before_bytes after_bytes
 	before_bytes=$(du_graphroot)
 
 	log "Storage before dedup: $(human_bytes "$before_bytes") ($before_bytes bytes)"
 	log "Images in store: $image_count"
 
-	local dedup_log="$workdir/dedup.log"
-	local dedup_secs
+	dedup_log="$WORKDIR/dedup.log"
 	dedup_secs=$(run_dedup "$dedup_log")
 
 	after_bytes=$(du_graphroot)
-	local delta=$((before_bytes - after_bytes))
-	local saved_line
-	saved_line=$(parse_saved_bytes "$dedup_log")
+	delta=$((before_bytes - after_bytes))
+	saved_line=$(parse_saved_line "$dedup_log")
 
 	{
 		echo "=============================================="
@@ -225,9 +235,10 @@ main() {
 		echo "crio dedup reported: $saved_line"
 		echo "----------------------------------------------"
 		echo "Notes:"
-		echo "- Shared blobs simulate duplicated base content across images."
-		echo "- Unique layer sizes vary 1-15 MB per image."
-		echo "- Compare dedup wall time vs Palantir 10-min boot SLA separately on SNO."
+		echo "- Each image COPY layer includes identical shared blobs plus a unique marker"
+		echo "  so podman does not reuse layers and duplicates remain on disk for dedup."
+		echo "- Unique per-image layer sizes vary 1-15 MB."
+		echo "- Report dedup wall time for boot SLA; build time is one-time, not per reboot."
 		echo "=============================================="
 	} | tee "$RESULTS_FILE"
 
