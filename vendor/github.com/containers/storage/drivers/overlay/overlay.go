@@ -2781,6 +2781,31 @@ func (d *Driver) Dedup(req graphdriver.DedupArgs) (graphdriver.DedupResult, erro
 			addDiff(dir)
 		}
 	}
+	// Fallback: walk every layer directory under the driver home(s). Layer IDs
+	// from the store may not resolve via dir2 (e.g. podman-populated storage).
+	addAllDiffUnderHome := func(home string) {
+		if home == "" {
+			return
+		}
+		entries, err := os.ReadDir(home)
+		if err != nil {
+			return
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			switch e.Name() {
+			case linkDir, stagingDir:
+				continue
+			}
+			addDiff(filepath.Join(home, e.Name()))
+		}
+	}
+	addAllDiffUnderHome(d.home)
+	addAllDiffUnderHome(d.homeDirForImageStore())
+
+	logrus.Debugf("overlay: dedup scanning %d layer diff directories", len(dirs))
 	r, err := dedup.DedupDirs(dirs, req.Options)
 	if err != nil {
 		return graphdriver.DedupResult{}, err
