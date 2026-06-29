@@ -2756,13 +2756,29 @@ func getMappedMountRoot(path string) string {
 // Dedup performs deduplication of the driver's storage.
 func (d *Driver) Dedup(req graphdriver.DedupArgs) (graphdriver.DedupResult, error) {
 	var dirs []string
-	for _, layer := range req.Layers {
-		dir, _, inAdditionalStore := d.dir2(layer, false)
-		if inAdditionalStore {
-			continue
+	seen := make(map[string]struct{})
+	addDiff := func(dir string) {
+		diff := filepath.Join(dir, "diff")
+		if _, ok := seen[diff]; ok {
+			return
 		}
-		if err := fileutils.Exists(dir); err == nil {
-			dirs = append(dirs, filepath.Join(dir, "diff"))
+		if err := fileutils.Exists(diff); err == nil {
+			seen[diff] = struct{}{}
+			dirs = append(dirs, diff)
+		}
+	}
+	for _, layer := range req.Layers {
+		// Image layers may live in the image store; check both locations.
+		for _, useImageStore := range []bool{true, false} {
+			dir, _, inAdditionalStore := d.dir2(layer, useImageStore)
+			if inAdditionalStore {
+				// Legacy behavior skipped these entirely, but layers found via
+				// additional image stores may still be writable (e.g. shared graphroot).
+				if err := fileutils.Exists(dir); err != nil {
+					continue
+				}
+			}
+			addDiff(dir)
 		}
 	}
 	r, err := dedup.DedupDirs(dirs, req.Options)

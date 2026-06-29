@@ -178,6 +178,20 @@ parse_saved_line() {
 	fi
 }
 
+diagnose_on_disk_duplicates() {
+	local pattern=${1:-'*/diff/shared/blob0.dat'}
+	local count unique_md5 unique_inodes
+	count=$(find "$GRAPHROOT" -path "$pattern" 2>/dev/null | wc -l | tr -d ' ')
+	unique_md5=$(find "$GRAPHROOT" -path "$pattern" -exec md5sum {} + 2>/dev/null | awk '{print $1}' | sort -u | wc -l | tr -d ' ')
+	unique_inodes=$(find "$GRAPHROOT" -path "$pattern" -exec stat -c '%d:%i' {} + 2>/dev/null | sort -u | wc -l | tr -d ' ')
+	log "On-disk duplicates ($pattern): files=$count unique_md5=$unique_md5 unique_inodes=$unique_inodes"
+	if [[ "$count" -gt 0 && "$unique_md5" == "1" && "$unique_inodes" == "$count" ]]; then
+		log "OK: identical content with separate inodes — dedup should be able to save space"
+	elif [[ "$count" -gt 0 && "$unique_inodes" -lt "$count" ]]; then
+		log "NOTE: some files already share inodes (partial dedup/hardlink at build time)"
+	fi
+}
+
 main() {
 	require_root
 	check_reflink
@@ -210,6 +224,7 @@ main() {
 
 	log "Storage before dedup: $(human_bytes "$before_bytes") ($before_bytes bytes)"
 	log "Images in store: $image_count"
+	diagnose_on_disk_duplicates '*/diff/shared/blob0.dat'
 
 	dedup_log="$WORKDIR/dedup.log"
 	dedup_secs=$(run_dedup "$dedup_log")
