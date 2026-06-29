@@ -445,6 +445,10 @@ func mergeConfig(config *libconfig.Config, ctx *cli.Context) error {
 		config.OCIArtifactMountSupport = ctx.Bool("oci-artifact-mount-support")
 	}
 
+	if ctx.IsSet("enable-storage-dedup") {
+		config.EnableStorageDedup = ctx.Bool("enable-storage-dedup")
+	}
+
 	if ctx.IsSet("enable-metrics") {
 		config.EnableMetrics = ctx.Bool("enable-metrics")
 	}
@@ -1296,6 +1300,12 @@ func getCrioFlags(defConf *libconfig.Config) []cli.Flag {
 			Usage:   "If true, CRI-O can mount OCI artifacts as volumes.",
 			EnvVars: []string{"CONTAINER_OCI_ARTIFACT_SUPPORT"},
 			Value:   defConf.OCIArtifactMountSupport,
+		},
+		&cli.BoolFlag{
+			Name:    "enable-storage-dedup",
+			Usage:   "Enable background storage deduplication using reflinks on startup.",
+			EnvVars: []string{"CONTAINER_ENABLE_STORAGE_DEDUP"},
+			Value:   defConf.EnableStorageDedup,
 		},
 		&cli.StringFlag{
 			Name:    "infra-ctr-cpuset",

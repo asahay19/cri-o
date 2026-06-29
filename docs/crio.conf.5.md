@@ -507,6 +507,13 @@ The timeout for an image pull to make progress until the pull operation gets can
 This option is whether CRI-O enables OCI Artifact mount.
 If true, CRI-O can mount OCI artifacts as volumes.
 
+**enable_storage_dedup**=false
+Enable background storage deduplication using reflinks on startup. Identical
+files across image layers are deduplicated at the filesystem level using
+copy-on-write clones, reducing disk usage without the drawbacks of hard links.
+Deduplication can also be triggered manually via `crio dedup`.
+Requires filesystem support (e.g., XFS with reflink=1 or Btrfs).
+
 ## CRIO.NETWORK TABLE
 
 The `crio.network` table containers settings pertaining to the management of CNI plugins.
