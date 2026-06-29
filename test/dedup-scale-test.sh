@@ -20,6 +20,7 @@
 #   CRIO_BIN=./bin/crio
 #   CRIO_CONF=/etc/crio/crio.conf
 #   RESULTS_FILE=/tmp/dedup-scale-results.txt
+#   TEST_WORKDIR=/var/tmp/crio-storage/dedup-scale-work  # build staging (default: next to graphroot)
 
 set -euo pipefail
 
@@ -29,6 +30,7 @@ RUNROOT="${RUNROOT:-/var/tmp/crio-storage/runroot}"
 CRIO_BIN="${CRIO_BIN:-./bin/crio}"
 CRIO_CONF="${CRIO_CONF:-/etc/crio/crio.conf}"
 RESULTS_FILE="${RESULTS_FILE:-/tmp/dedup-scale-results.txt}"
+TEST_WORKDIR="${TEST_WORKDIR:-$(dirname "$GRAPHROOT")/dedup-scale-work}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 FRESH="${FRESH:-0}"
 
@@ -186,6 +188,8 @@ EOF
 			exit 1
 		fi
 
+		rm -rf "$ctx"
+
 		if (( n % 10 == 0 )); then
 			log "Built $n / $NUM_IMAGES images..."
 		fi
@@ -249,9 +253,12 @@ main() {
 		log "FRESH=1: wiping $GRAPHROOT and $RUNROOT"
 		rm -rf "$GRAPHROOT" "$RUNROOT"
 		mkdir -p "$GRAPHROOT" "$RUNROOT"
+		rm -rf "$TEST_WORKDIR"
 	fi
 
-	WORKDIR=$(mktemp -d)
+	mkdir -p "$TEST_WORKDIR"
+	WORKDIR=$(mktemp -d "$TEST_WORKDIR/run.XXXXXX")
+	log "Build staging dir: $WORKDIR (on same mount as graphroot; avoids filling /tmp)"
 
 	local build_secs=0
 	if [[ "$SKIP_BUILD" != "1" ]]; then
