@@ -70,6 +70,21 @@ check_reflink() {
 	fi
 }
 
+# CRI-O reads root/runroot from [crio], NOT [crio.storage]. Wrong section => dedup hits
+# the default /var/lib/containers/storage while podman populated $GRAPHROOT.
+write_crio_conf() {
+	local conf="${CRIO_CONF:-/etc/crio/crio.conf}"
+	mkdir -p "$(dirname "$conf")"
+	cat >"$conf" <<EOF
+# Written by dedup-scale-test.sh — storage keys must be under [crio]
+[crio]
+root = "$GRAPHROOT"
+runroot = "$RUNROOT"
+storage_driver = "overlay"
+EOF
+	log "Wrote $conf (root=$GRAPHROOT)"
+}
+
 du_graphroot() {
 	du -sb "$GRAPHROOT" 2>/dev/null | awk '{print $1}'
 }
@@ -200,6 +215,8 @@ main() {
 		echo "CRI-O binary not found: $CRIO_BIN" >&2
 		exit 1
 	fi
+
+	write_crio_conf
 
 	if [[ "$FRESH" == "1" ]]; then
 		log "FRESH=1: wiping $GRAPHROOT and $RUNROOT"
