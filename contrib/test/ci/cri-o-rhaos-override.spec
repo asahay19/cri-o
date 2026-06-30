@@ -68,11 +68,10 @@ popd
 ln -s vendor src
 export GOPATH=$(pwd)/_output:$(pwd)
 export GO111MODULE=off
-export BUILDTAGS="libtrust_openssl containers_image_ostree_stub \
+export BUILDTAGS="libtrust_openssl exclude_graphdriver_btrfs containers_image_ostree_stub \
 $(hack/seccomp_tag.sh) \
 $(hack/selinux_tag.sh) \
-$(hack/openpgp_tag.sh) \
-$(hack/libsubid_tag.sh)"
+$(hack/openpgp_tag.sh)"
 make bin/crio bin/pinns
 
 %install
@@ -84,5 +83,5 @@ install -D -m 0755 bin/pinns %{buildroot}%{_bindir}/pinns
 %{_bindir}/pinns
 
 %changelog
-* Mon Jun 30 2026 Dedup override build
+* Tue Jun 30 2026 OCPNODE-4588 <ocpnode-4588@redhat.com> - 1.dedup-1
 - Binary-only RHAOS override RPM for OCPNODE-4588
