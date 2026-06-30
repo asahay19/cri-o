@@ -591,6 +591,15 @@ type ImageConfig struct {
 	PullProgressTimeout time.Duration `toml:"pull_progress_timeout"`
 	// OCIArtifactMountSupport is used to determine if CRI-O should support OCI Artifacts.
 	OCIArtifactMountSupport bool `toml:"oci_artifact_mount_support"`
+	// EnableStorageDedup enables background storage deduplication using
+	// reflinks on startup. Identical files across image layers are
+	// deduplicated at the filesystem level using copy-on-write clones,
+	// reducing disk usage without the drawbacks of hard links.
+	// Deduplication can also be triggered manually via `crio dedup`.
+	// Requires filesystem support (e.g., XFS with reflink=1 or Btrfs).
+	// Disabled by default: adds startup latency and needs reflink support.
+	// Enable on storage-constrained nodes; use `crio dedup` for manual runs.
+	EnableStorageDedup bool `toml:"enable_storage_dedup"`
 }
 
 // NetworkConfig represents the "crio.network" TOML config table.

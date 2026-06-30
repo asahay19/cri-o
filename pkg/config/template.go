@@ -564,6 +564,11 @@ func initCrioTemplateConfig(c *Config) ([]*templateConfigValue, error) {
 			isDefaultValue: simpleEqual(dc.OCIArtifactMountSupport, c.OCIArtifactMountSupport),
 		},
 		{
+			templateString: templateStringCrioImageEnableStorageDedup,
+			group:          crioImageConfig,
+			isDefaultValue: simpleEqual(dc.EnableStorageDedup, c.EnableStorageDedup),
+		},
+		{
 			templateString: templateStringCrioNetworkCniDefaultNetwork,
 			group:          crioNetworkConfig,
 			isDefaultValue: simpleEqual(dc.CNIDefaultNetwork, c.CNIDefaultNetwork),
@@ -817,6 +822,18 @@ const templateStringCrioInternalRepair = `# InternalRepair is whether CRI-O shou
 const templateStringOCIArtifactMountSupport = `# OCIArtifactMountSupport is whether CRI-O should support OCI artifacts.
 # If set to false, mounting OCI Artifacts will result in an error.
 {{ $.Comment }}oci_artifact_mount_support = {{ .OCIArtifactMountSupport }}
+`
+
+const templateStringCrioImageEnableStorageDedup = `# EnableStorageDedup enables background storage deduplication using
+# reflinks on startup. Identical files across image layers are
+# deduplicated at the filesystem level using copy-on-write clones,
+# reducing disk usage without the drawbacks of hard links.
+# Deduplication can also be triggered manually via crio dedup.
+# Requires filesystem support (e.g., XFS with reflink=1 or Btrfs).
+# Disabled by default because dedup adds startup latency and only works on
+# filesystems with reflink support. Enable on storage-constrained nodes after
+# confirming the graph root uses XFS with reflink=1 or Btrfs.
+{{ $.Comment }}enable_storage_dedup = {{ .EnableStorageDedup }}
 `
 
 const templateStringCrioAPI = `# The crio.api table contains settings for the kubelet/gRPC interface.

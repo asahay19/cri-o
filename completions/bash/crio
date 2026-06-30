@@ -98,6 +98,7 @@ h
 --nri-plugin-registration-timeout
 --nri-plugin-request-timeout
 --oci-artifact-mount-support
+--enable-storage-dedup
 --pause-command
 --pause-image
 --pause-image-auth-file
