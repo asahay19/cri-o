@@ -23,10 +23,12 @@ tar czf "${rpm_tmp_dir}/SOURCES/${OS_RPM_NAME}-test.tar.gz" \
 
 chown "$(id -u):$(id -g)" "${OS_RPM_SPECFILE}" 2>/dev/null || true
 
-# Match hack/build-rpms.sh: cri-o requires a recent Go (see go.mod).
-GO_VERSION=$(curl -sSfL "https://go.dev/VERSION?m=text" | head -n1)
+# Pin Go to go.mod requirement; upstream Go lacks ecdsa.HashSign needed for
+# libtrust_openssl (RHAOS uses a patched toolchain). CI tags use no_openssl.
+GO_VERSION="go1.24.3"
 curl -sSfL -o- "https://go.dev/dl/${GO_VERSION}.linux-amd64.tar.gz" | tar xfz - -C /usr/local
 export PATH=/usr/local/go/bin:$PATH
+go version
 
 rpmbuild -ba "${OS_RPM_SPECFILE}" \
 	--define "_sourcedir ${rpm_tmp_dir}/SOURCES" \

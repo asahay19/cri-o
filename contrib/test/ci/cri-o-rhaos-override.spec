@@ -33,7 +33,6 @@ BuildRequires: gpgme-devel
 BuildRequires: libassuan-devel
 BuildRequires: libseccomp-devel
 BuildRequires: libselinux-devel
-BuildRequires: openssl-devel
 BuildRequires: pkgconfig(systemd)
 
 Requires(pre): container-selinux
@@ -59,11 +58,17 @@ sed -i 's/go test/$(GO) test/' Makefile
 sed -i 's/%{version}/%{version}-%{release}/' internal/version/version.go
 
 %build
-export GOFLAGS=-mod=vendor
-export BUILDTAGS="libtrust_openssl exclude_graphdriver_btrfs containers_image_ostree_stub \
-$(hack/seccomp_tag.sh) \
-$(hack/selinux_tag.sh) \
-$(hack/openpgp_tag.sh)"
+# Same compile path as contrib/test/ci/cri-o.spec (proven on this branch).
+# Reads vendor/ via symlink only — vendor/ is never modified.
+mkdir _output
+pushd _output
+mkdir -p src/%{provider}.%{provider_tld}/{%{project},opencontainers}
+ln -s $(dirs +1 -l) src/%{import_path}
+popd
+
+ln -s vendor src
+export GOPATH=$(pwd)/_output:$(pwd)
+export BUILDTAGS="selinux seccomp exclude_graphdriver_btrfs containers_image_ostree_stub containers_image_openpgp"
 make bin/crio bin/pinns
 
 %install
