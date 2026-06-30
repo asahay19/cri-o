@@ -59,15 +59,7 @@ sed -i 's/go test/$(GO) test/' Makefile
 sed -i 's/%{version}/%{version}-%{release}/' internal/version/version.go
 
 %build
-mkdir _output
-pushd _output
-mkdir -p src/%{provider}.%{provider_tld}/{%{project},opencontainers}
-ln -s $(dirs +1 -l) src/%{import_path}
-popd
-
-ln -s vendor src
-export GOPATH=$(pwd)/_output:$(pwd)
-export GO111MODULE=off
+export GOFLAGS=-mod=vendor
 export BUILDTAGS="libtrust_openssl exclude_graphdriver_btrfs containers_image_ostree_stub \
 $(hack/seccomp_tag.sh) \
 $(hack/selinux_tag.sh) \
